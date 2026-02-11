@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 import os.path
-import random
 
 import torch
 from torch.utils.data import Dataset
@@ -17,7 +16,7 @@ class DataSample:
     pred_py_path: str
 
 
-class CadRefineImagesDataset(Dataset):
+class CadReasonerImagesDataset(Dataset):
     def __init__(self, samples: list[DataSample], train=True, scale_gt=False, scale_pred=False):
         super().__init__()
         self.samples = samples
@@ -38,13 +37,6 @@ class CadRefineImagesDataset(Dataset):
 
         try:
             if sample.pred_py_path and os.path.exists(sample.pred_mesh_path) and os.path.exists(sample.pred_py_path):
-                if self.train and random.random() < 0.5:
-                    sample = DataSample(
-                        gt_mesh_path=sample.pred_mesh_path,
-                        gt_py_path=sample.pred_py_path,
-                        pred_mesh_path=sample.gt_mesh_path,
-                        pred_py_path=sample.gt_py_path,
-                    )
                 try:
                     image = self.plotter.get_img(sample.gt_mesh_path, sample.pred_mesh_path)
                 except Exception as e:

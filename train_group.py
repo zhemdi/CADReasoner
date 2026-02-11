@@ -9,7 +9,6 @@ from functools import partial
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
 from transformers import (
     AutoProcessor,
     Qwen2VLForConditionalGeneration,
@@ -18,7 +17,7 @@ from transformers import (
     TrainerCallback,
 )
 
-from dataset import CadRefineImagesDataset, generation_collate_fn, DataSample, collate_fn_for_sft
+from dataset import CadReasonerImagesDataset, DataSample, collate_fn_for_sft
 
 warnings.filterwarnings("ignore", category=UserWarning, module='trimesh')
 
@@ -114,7 +113,7 @@ def run_training(
         evaluation_strategy="steps",
         eval_steps=0.099,
         load_best_model_at_end=True,
-        report_to=None,
+        report_to="none",
     )
 
     n_gpus = torch.cuda.device_count()
@@ -203,44 +202,6 @@ def get_samples(dataset_dir, buffer_dir, group):
     return train_samples, val_samples
 
 
-def dump_training_samples(run_dir, group, train_samples, n_samples=100):
-    if n_samples <= 0:
-        return
-
-    dir = run_dir / "buffer" / str(group) / "some_train_samples"
-    dir.mkdir(parents=True, exist_ok=True)
-
-    train_dataset = CadRefineImagesDataset(samples=train_samples, scale_gt=True)
-
-    dataloader = DataLoader(
-        train_dataset,
-        batch_size=n_samples,
-        shuffle=True,
-        drop_last=False,
-        collate_fn=generation_collate_fn,
-        num_workers=1,
-        prefetch_factor=1,
-    )
-
-    for batch in dataloader:
-        for idx, target_code, generated_code, input_image in \
-                zip(batch["index"], batch["target_code"], batch["generated_code"], batch["image"]):
-            sample_dir = dir / str(idx)
-            sample_dir.mkdir(parents=True, exist_ok=True)
-
-            with open(sample_dir / "target_code.py", "w") as f:
-                f.write(target_code)
-
-            with open(sample_dir / "generated_code.py", "w") as f:
-                f.write(generated_code)
-
-            input_image.save(str(sample_dir / "input_image.png"))
-        break
-
-    del train_dataset
-    gc.collect()
-
-
 def run_curriculum(
     groups: list[int],
     run_dir: str,
@@ -263,13 +224,11 @@ def run_curriculum(
 
         train_samples, val_samples = get_samples(dataset_dir=dataset_dir, buffer_dir=buffer_dir, group=group)
 
-        train_dataset = CadRefineImagesDataset(samples=train_samples, scale_gt=True)
-        eval_dataset = CadRefineImagesDataset(samples=val_samples, scale_gt=True)
+        train_dataset = CadReasonerImagesDataset(samples=train_samples, scale_gt=True)
+        eval_dataset = CadReasonerImagesDataset(samples=val_samples, scale_gt=True)
 
         logger.info(f"Length of train dataset: {len(train_dataset)}.")
         logger.info(f"Length of val dataset: {len(eval_dataset)}.")
-
-        # dump_training_samples(run_dir, group, train_samples)
 
         logger.info(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}: Start training.')
 

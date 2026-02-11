@@ -75,7 +75,6 @@ class ProcessPool:
                         hang_process.join()
 
                     unprocessed_args.append(task_args[i][shared_args_indicies[i].value])
-                    # with shared_args_indicies[i].get_lock():
                     shared_args_indicies[i].value += 1
                     new_process = Process(
                         target=Wrapper(self.task_func), args=(task_args[i], shared_args_indicies[i]), daemon=True

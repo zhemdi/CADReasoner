@@ -14,7 +14,7 @@ from transformers import (
     GenerationConfig,
 )
 
-from dataset import CadRefineImagesDataset, generation_collate_fn, DataSample
+from dataset import CadReasonerImagesDataset, generation_collate_fn, DataSample
 from train_group import init_model
 from utils import generate_meshes, split_list
 
@@ -55,7 +55,7 @@ def generate_for_refinement_iteration_worker(rank, samples, model_state_dict, re
     model.to(device)
     model.eval()
 
-    dataset = CadRefineImagesDataset(samples=samples, scale_gt=True)
+    dataset = CadReasonerImagesDataset(samples=samples, scale_gt=True)
 
     dataloader = DataLoader(
         dataset,
@@ -75,7 +75,7 @@ def generate_for_refinement_iteration_worker(rank, samples, model_state_dict, re
         do_sample=True
     )
 
-    refined_samples = []
+    refinement_samples = []
 
     if rank == 0:
         _iterator = tqdm(dataloader, desc="Code generation")
@@ -109,10 +109,15 @@ def generate_for_refinement_iteration_worker(rank, samples, model_state_dict, re
         inputs = inputs.to(model.device)
 
         with torch.no_grad():
-            generated_ids = model.generate(
-                **inputs, max_new_tokens=1100,
-                do_sample=True, generation_config=generation_config, top_k=top_k, temperature=temperature,
-            )
+            if iteration_num == 1:
+                generated_ids = model.generate(
+                    **inputs, max_new_tokens=1100,
+                    do_sample=True, generation_config=generation_config, top_k=top_k, temperature=temperature,
+                )
+            else:
+                generated_ids = model.generate(
+                    **inputs, max_new_tokens=1100,
+                )
 
             generated_ids_trimmed = [
                 out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
@@ -129,13 +134,13 @@ def generate_for_refinement_iteration_worker(rank, samples, model_state_dict, re
                 pred_mesh_path=re.sub(r'(\d+)\.stl$', f"{iteration_num}.stl", sample.pred_mesh_path),
                 pred_py_path=re.sub(r'(\d+)\.py$', f"{iteration_num}.py", sample.pred_py_path),
             )
-            refined_samples.append(data_sample)
+            refinement_samples.append(data_sample)
             with open(data_sample.pred_py_path, "w") as f:
                 f.write(py_strings[i])
 
         del inputs, generated_ids, messages, vision_inputs, video_inputs
 
-    results_dict[rank] = refined_samples
+    results_dict[rank] = refinement_samples
 
 
 def generate_for_refinement_iteration(model, samples, iteration_num, batch_size=64):
