@@ -277,8 +277,8 @@ def run(test_datasets, checkpoint, outdir, n_iters, top_n, n_samples, greedy):
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument('--dataset', type=str, help='The directory with .stl files.')
-    parser.add_argument('--checkpoint', type=str)
     parser.add_argument('--outdir', type=str, help='Directory to save predictions to.')
+    parser.add_argument('--checkpoint', type=str, default="kulibinai/cadreasoner")
     parser.add_argument('--n_iters', type=int, default=5, help='Number of refinement iterations.')
     parser.add_argument('--greedy', default=False, type=lambda x: x.lower() == 'true',
                         help='Use greedy generation instead of generation with sampling.')
