@@ -55,20 +55,28 @@ This directory contains dataset split and conversion utilities.
 2) Training
 
 To launch the training curriculum, run:
-```python
+```bash
 ./training_curriculum.sh <train_dataset> <per_device_train_batch_size> <n_gpus>
 ```
 
 3) Inference
 
 To generate CadQuery predictions, run:
-```python
-python3 test.py --dataset <test_dataset> --checkpoint <checkpoint> --n_iters <n_iters> --outdir <outdir>
+```bash
+python3 test.py --dataset <test_dataset> --checkpoint kulibinai/CADReasoner --n_iters <n_iters> --outdir <outdir>
 ```
+
+<test_dataset> can be one of:
+*	maksimko123/deepcad_test_mesh
+*	maksimko123/fusion360_test_mesh
+*	kulibinai/mcb_test
+*	kulibinai/deepcad_test_scan
+*	kulibinai/fusion360_test_scan
+*	kulibinai/mcb_test_scan
 4) Evaluation
 
 To compute evaluation metrics, run:
-```python
+```bash
 python3 evaluate.py --dataset <test_dataset> --pred_dir <pred_dir>
 ```
 5) Scan simulation

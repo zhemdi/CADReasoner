@@ -6,6 +6,8 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
 
+from huggingface_hub import snapshot_download
+
 import numpy as np
 import torch
 import trimesh
@@ -25,6 +27,30 @@ from utils import generate_meshes, split_list
 
 warnings.filterwarnings("ignore", category=UserWarning, module='trimesh')
 
+def resolve_dataset_dir(dataset: str) -> tuple[Path, str]:
+    """
+    Returns:
+        dataset_dir: local directory containing .stl files
+        dataset_name: name used for output subfolder
+    """
+    dataset_path = Path(dataset)
+
+    # local directory
+    if dataset_path.exists():
+        return dataset_path, dataset_path.name
+
+    # Hugging Face dataset repo id
+    if "/" in dataset:
+        local_dir = snapshot_download(
+            repo_id=dataset,
+            repo_type="dataset",
+            allow_patterns=["*.stl"],
+        )
+        return Path(local_dir), dataset.split("/")[-1]
+
+    raise ValueError(
+        f"Dataset '{dataset}' is neither an existing local directory nor a valid HF dataset repo id."
+    )
 
 @dataclass
 class DataSample:
@@ -160,11 +186,11 @@ def create_samples(dataset_dir, outdir, iter_num, top_n, n_samples):
                 pred_py_path="None",
                 save_pred_path=str(outdir / str(iter_num) / gt_mesh_path.stem / f"pred{resample_idx}"),
                 resample_idx=resample_idx,
-            ) for gt_mesh_path in dataset_dir.glob("*.stl") for resample_idx in range(n_samples)
+            ) for gt_mesh_path in dataset_dir.rglob("*.stl") for resample_idx in range(n_samples)
         ]
     else:
         samples = []
-        for gt_mesh_path in dataset_dir.glob("*.stl"):
+        for gt_mesh_path in dataset_dir.rglob("*.stl"):
             prev_iteration_pred_py_paths = list((outdir / str(iter_num - 1) / gt_mesh_path.stem).glob('*.py'))
             prev_iteration_pred_py_paths = sorted(prev_iteration_pred_py_paths, key=lambda x: float(x.stem) if is_float(x.stem) else float("inf"))
             prev_iteration_pred_py_paths = prev_iteration_pred_py_paths[:top_n]
@@ -248,9 +274,8 @@ def run(test_datasets, checkpoint, outdir, n_iters, top_n, n_samples, greedy):
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    for dataset_dir in test_datasets:
-        dataset_name = os.path.basename(dataset_dir)
-        dataset_dir = Path(dataset_dir)
+    for dataset in test_datasets:
+        dataset_dir, dataset_name = resolve_dataset_dir(dataset)
         for iter_num in range(1, n_iters + 1):
             print("---" * 10, dataset_name, f"iter_num = {iter_num}", "---" * 10)
             if greedy:
