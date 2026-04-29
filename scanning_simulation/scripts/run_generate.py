@@ -2,56 +2,42 @@
 """
 run_generate.py
 
-Copies a dataset directory tree to a new location.
-All files are copied as-is, EXCEPT:
-- every *.stl file is replaced with a defective version produced by DefectPipeline.
-
-Pipeline parameters are read from a JSON config (same structure as PipelineConfig.dump_json()).
+Replaces every *.stl in src_dataset with a defective version in dst_dataset.
+Non-STL files are copied as-is.
 
 Example:
   python scripts/run_generate.py \
     --src_dataset /path/to/dataset \
     --dst_dataset /path/to/dataset_defected \
     --config /path/to/config.json \
-    --num_workers 1 \
-    --save_meta
-
-Notes:
-- Preserves folder structure and file names.
-- Uses shutil.copy2 for non-STL files (keeps timestamps/metadata).
-- For STL files: writes defective STL to the same relative path in dst.
-- If --save_meta: also saves per-STL JSON next to the STL:
-    <name>.defect_meta.json with timings/stats + the effective config.
+    --num_workers 16
 """
 
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import multiprocessing as mp
 import os
+import random
 import shutil
-from dataclasses import is_dataclass
-from dataclasses import asdict
+import time
+from collections import deque
+from dataclasses import is_dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple, get_type_hints
 
 import sys
-sys.path.append(str(Path(__file__).parent.parent))  # to import defect_pipeline
+sys.path.append(str(Path(__file__).parent.parent))
 
-from defect_pipeline import PipelineConfig, DefectPipeline 
-from defect_pipeline.io import save_json 
+from defect_pipeline.config import PipelineConfig
 
 
-# ----------------------------
-# Config loading (JSON -> dataclasses)
-# ----------------------------
+MISSING_SURFACES = ["-z", "-x", "-y", "+z", "+x", "+y"]
+
 
 def _construct_dataclass(dc_type, data: Dict[str, Any]):
-    """
-    Construct a dataclass instance of type dc_type from dict `data`.
-    Works for nested dataclasses used in PipelineConfig.
-    """
     field_types = get_type_hints(dc_type)
     kwargs = {}
     for field in dc_type.__dataclass_fields__.values():
@@ -60,7 +46,6 @@ def _construct_dataclass(dc_type, data: Dict[str, Any]):
         if name not in data:
             continue
         val = data[name]
-        # If the field type is itself a dataclass, recurse
         if isinstance(val, dict) and isinstance(ftype, type) and is_dataclass(ftype):
             kwargs[name] = _construct_dataclass(ftype, val)
         else:
@@ -69,175 +54,201 @@ def _construct_dataclass(dc_type, data: Dict[str, Any]):
 
 
 def load_pipeline_config_json(path: str | Path) -> PipelineConfig:
-    path = Path(path)
-    with open(path, "r", encoding="utf-8") as f:
+    with open(Path(path), "r", encoding="utf-8") as f:
         data = json.load(f)
     return _construct_dataclass(PipelineConfig, data)
 
 
-# ----------------------------
+# ---------------------------------------------------------------------------
 # File collection
-# ----------------------------
+# ---------------------------------------------------------------------------
 
-def iter_files(root: Path) -> Iterable[Path]:
-    for dirpath, _, filenames in os.walk(root):
+def build_tasks(src_root: Path, dst_root: Path) -> Tuple[List[Tuple[Path, Path]], List[Tuple[Path, Path]]]:
+    stl_tasks: List[Tuple[Path, Path]] = []
+    other_tasks: List[Tuple[Path, Path]] = []
+    for dirpath, _, filenames in os.walk(src_root):
         d = Path(dirpath)
         for fn in filenames:
-            yield d / fn
+            src = d / fn
+            dst = dst_root / src.relative_to(src_root)
+            if src.suffix.lower() == ".stl":
+                stl_tasks.append((src, dst))
+            else:
+                other_tasks.append((src, dst))
+    return stl_tasks, other_tasks
 
 
-def is_stl(p: Path) -> bool:
-    return p.suffix.lower() == ".stl"
+# ---------------------------------------------------------------------------
+# Worker
+# ---------------------------------------------------------------------------
+
+_CFG_PATH: str = ""
 
 
-def rel_to(p: Path, root: Path) -> Path:
-    return p.relative_to(root)
+def _init_worker(config_path: str) -> None:
+    global _CFG_PATH
+    _CFG_PATH = config_path
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 
-# ----------------------------
-# Processing logic
-# ----------------------------
+def _process_one(args: Tuple[str, str]) -> Tuple[str, str]:
+    src_str, dst_str = args
+    src_stl, dst_stl = Path(src_str), Path(dst_str)
 
-def process_one_stl(
-    src_stl: Path,
-    dst_stl: Path,
-    cfg: PipelineConfig,
-    save_meta: bool,
-) -> None:
-    """
-    Run the defect pipeline on src_stl and save defective STL to dst_stl.
-    """
-    dst_stl.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from defect_pipeline import DefectPipeline
 
-    pipe = DefectPipeline(cfg)
-    res = pipe.run_from_path(str(src_stl))
+        cfg = load_pipeline_config_json(_CFG_PATH)
+        cfg = replace(cfg,
+            scan=replace(cfg.scan, missing_surface=random.choice(MISSING_SURFACES)),
+            defect=replace(cfg.defect, n_holes=random.randint(0, 8)),
+            inp=replace(cfg.inp, seed=None),
+        )
 
-    # Export defective STL
-    res.mesh_defected.export(str(dst_stl))
+        pipe = DefectPipeline(cfg)
+        mesh_def, _, _ = pipe.run_for_export(str(src_stl))
 
-    if save_meta:
-        meta = {
-            "src": str(src_stl),
-            "dst": str(dst_stl),
-            "timings": res.timings,
-            "stats": res.stats,
-            "config": cfg.to_dict() if hasattr(cfg, "to_dict") else asdict(cfg),
-        }
-        meta_path = dst_stl.with_suffix(dst_stl.suffix + ".defect_meta.json")
-        save_json(meta, meta_path)
+        dst_stl.parent.mkdir(parents=True, exist_ok=True)
+        mesh_def.export(str(dst_stl))
+
+        del mesh_def, pipe, cfg
+        gc.collect()
+        return src_stl.name, "OK"
+
+    except Exception as e:
+        return src_stl.name, f"FAIL: {e}"
 
 
-def copy_non_stl(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+# ---------------------------------------------------------------------------
+# Progress tracker
+# ---------------------------------------------------------------------------
+
+class ProgressTracker:
+    """Compact rolling-window progress with ETA."""
+
+    def __init__(self, total: int, log_interval: float = 10.0):
+        self.total = total
+        self.log_interval = log_interval
+        self.done = 0
+        self.fails = 0
+        self.t_start = time.monotonic()
+        self.t_last_log = self.t_start
+        self._recent: deque[float] = deque()
+
+    def tick(self, ok: bool) -> None:
+        self.done += 1
+        if not ok:
+            self.fails += 1
+        now = time.monotonic()
+        self._recent.append(now)
+        while self._recent and now - self._recent[0] > 60:
+            self._recent.popleft()
+
+        if now - self.t_last_log >= self.log_interval:
+            self._print(now)
+            self.t_last_log = now
+
+    def _print(self, now: float) -> None:
+        elapsed = now - self.t_start
+        left = self.total - self.done
+        pct = 100.0 * self.done / self.total
+
+        recent_rate = len(self._recent) / 60.0 if self._recent else 0.0
+        avg_rate = self.done / elapsed if elapsed > 0 else 0.0
+
+        if recent_rate > 0:
+            eta_sec = left / recent_rate
+        elif avg_rate > 0:
+            eta_sec = left / avg_rate
+        else:
+            eta_sec = 0.0
+
+        eta = _fmt_time(eta_sec)
+        el = _fmt_time(elapsed)
+
+        fail_s = f"  fails={self.fails}" if self.fails else ""
+        print(
+            f"[{self.done}/{self.total}] {pct:.1f}%  "
+            f"last_min={len(self._recent):.0f} stl  "
+            f"avg={avg_rate:.1f} stl/s  "
+            f"elapsed={el}  ETA={eta}{fail_s}",
+            flush=True,
+        )
+
+    def summary(self) -> None:
+        elapsed = time.monotonic() - self.t_start
+        avg = self.done / elapsed if elapsed > 0 else 0.0
+        print(
+            f"\nDone: {self.done}/{self.total} STL in {_fmt_time(elapsed)}  "
+            f"avg={avg:.1f} stl/s  fails={self.fails}",
+            flush=True,
+        )
 
 
-def build_tasks(src_root: Path, dst_root: Path) -> List[Tuple[Path, Path, bool]]:
-    """
-    Returns list of (src_path, dst_path, is_stl).
-    """
-    tasks: List[Tuple[Path, Path, bool]] = []
-    for src_path in iter_files(src_root):
-        r = rel_to(src_path, src_root)
-        dst_path = dst_root / r
-        tasks.append((src_path, dst_path, is_stl(src_path)))
-    return tasks
+def _fmt_time(sec: float) -> str:
+    if sec < 60:
+        return f"{sec:.0f}s"
+    if sec < 3600:
+        return f"{sec / 60:.1f}m"
+    return f"{sec / 3600:.1f}h"
 
 
-# ----------------------------
-# Optional: parallel execution
-# ----------------------------
-
-def _worker_init_and_run(args_tuple):
-    """
-    Separate worker function for ProcessPoolExecutor.
-    Recreates PipelineConfig and runs per-file.
-    """
-    src_stl, dst_stl, config_path, save_meta = args_tuple
-    cfg = load_pipeline_config_json(config_path)
-    process_one_stl(Path(src_stl), Path(dst_stl), cfg, save_meta)
-    return True
-
-
-# ----------------------------
+# ---------------------------------------------------------------------------
 # CLI
-# ----------------------------
+# ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src_dataset", type=str, required=True, help="Path to source dataset root")
-    ap.add_argument("--dst_dataset", type=str, required=True, help="Path to destination dataset root")
-    ap.add_argument("--config", type=str, required=True, help="Path to pipeline config JSON (PipelineConfig.dump_json)")
-    ap.add_argument("--num_workers", type=int, default=1, help="1 = sequential, >1 = process-based parallel")
-    ap.add_argument("--save_meta", action="store_true", help="Save per-STL timings/stats/config next to outputs")
-    ap.add_argument("--overwrite", action="store_true", help="Allow destination to exist (will add/overwrite files)")
+    ap.add_argument("--src_dataset", type=str, required=True)
+    ap.add_argument("--dst_dataset", type=str, required=True)
+    ap.add_argument("--config", type=str, required=True)
+    ap.add_argument("--num_workers", type=int, default=16)
+    ap.add_argument("--overwrite", action="store_true")
     args = ap.parse_args()
 
     src_root = Path(args.src_dataset).resolve()
     dst_root = Path(args.dst_dataset).resolve()
-    cfg = load_pipeline_config_json(args.config)
 
     if not src_root.exists() or not src_root.is_dir():
-        raise SystemExit(f"src_dataset does not exist or is not a directory: {src_root}")
-
+        raise SystemExit(f"src_dataset not found: {src_root}")
     if dst_root.exists() and not args.overwrite:
-        raise SystemExit(
-            f"dst_dataset already exists: {dst_root}\n"
-            f"Use --overwrite to proceed."
-        )
+        raise SystemExit(f"dst_dataset exists: {dst_root}\nUse --overwrite to proceed.")
     dst_root.mkdir(parents=True, exist_ok=True)
 
-    tasks = build_tasks(src_root, dst_root)
-    stl_tasks = [(s, d) for (s, d, isstl) in tasks if isstl]
-    other_tasks = [(s, d) for (s, d, isstl) in tasks if not isstl]
+    stl_tasks, other_tasks = build_tasks(src_root, dst_root)
 
-    # 1) Copy all non-STL files
     for src_path, dst_path in other_tasks:
-        copy_non_stl(src_path, dst_path)
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_path, dst_path)
+    if other_tasks:
+        print(f"Copied {len(other_tasks)} non-STL files", flush=True)
 
-    # 2) Process STL files
-    total_stl = len(stl_tasks)
-    print(f"Starting STL processing: {total_stl} file(s), workers={args.num_workers}", flush=True)
+    total = len(stl_tasks)
+    print(f"STL to process: {total}  workers: {args.num_workers}", flush=True)
+
+    payloads = [(str(s), str(d)) for s, d in stl_tasks]
+    tracker = ProgressTracker(total, log_interval=10.0)
+
+    mp.set_start_method("spawn", force=True)
+
     if args.num_workers <= 1:
-        for i, (src_stl, dst_stl) in enumerate(stl_tasks, start=1):
-            print(f"[{i}/{total_stl}] {src_stl}", flush=True)
-            process_one_stl(src_stl, dst_stl, cfg, args.save_meta)
+        _init_worker(args.config)
+        for payload in payloads:
+            name, status = _process_one(payload)
+            tracker.tick(ok=status == "OK")
     else:
-        from concurrent.futures import ProcessPoolExecutor, as_completed
-        from concurrent.futures.process import BrokenProcessPool
+        cs = max(1, total // (args.num_workers * 8))
+        with mp.Pool(args.num_workers, _init_worker, (args.config,)) as pool:
+            for name, status in pool.imap_unordered(_process_one, payloads, chunksize=cs):
+                tracker.tick(ok=status == "OK")
+                if status != "OK":
+                    print(f"  FAIL: {name}: {status}", flush=True)
 
-        payloads = [
-            (str(src_stl), str(dst_stl), str(args.config), bool(args.save_meta))
-            for src_stl, dst_stl in stl_tasks
-        ]
-
-        mp_ctx = mp.get_context("spawn")
-        try:
-            with ProcessPoolExecutor(max_workers=args.num_workers, mp_context=mp_ctx) as ex:
-                futures = [ex.submit(_worker_init_and_run, p) for p in payloads]
-                for i, fut in enumerate(as_completed(futures), start=1):
-                    _ = fut.result()  # to catch exceptions from workers
-                    print(f"[{i}/{total_stl}] done", flush=True)
-        except (BrokenProcessPool, PermissionError, OSError) as e:
-            print(
-                f"Process pool unavailable ({e.__class__.__name__}: {e}). "
-                "Falling back to sequential processing.",
-                flush=True,
-            )
-            for i, (src_stl, dst_stl) in enumerate(stl_tasks, start=1):
-                print(f"[fallback {i}/{total_stl}] {src_stl}", flush=True)
-                process_one_stl(src_stl, dst_stl, cfg, args.save_meta)
-
-    # Save dataset-level config for convenience
-    (dst_root / "_defect_pipeline").mkdir(parents=True, exist_ok=True)
-    out_cfg_path = dst_root / "_defect_pipeline" / "config.json"
-    cfg.dump_json(out_cfg_path)
-    
-
-    print(f"Done.\n  src: {src_root}\n  dst: {dst_root}")
-    print(f"  copied non-STL: {len(other_tasks)}")
-    print(f"  processed STL:  {len(stl_tasks)}")
-    print(f"  config saved:   {out_cfg_path}")
+    tracker.summary()
+    print(f"  src: {src_root}\n  dst: {dst_root}")
 
 
 if __name__ == "__main__":
