@@ -68,7 +68,7 @@ def add_local_gaussian_bump(
     d = np.linalg.norm(verts - center[None, :], axis=1)
     mask = d < radius
     if not np.any(mask):
-        return mesh.copy()
+        return mesh
 
     denom = (sigma * radius) + 1e-12
     gauss = np.exp(-0.5 * (d[mask] / denom) ** 2)
@@ -76,16 +76,7 @@ def add_local_gaussian_bump(
     return trimesh.Trimesh(vertices=verts, faces=mesh.faces, process=False)
 
 
-def add_random_noise_trimesh(mesh: trimesh.Trimesh, rng: np.random.Generator, noise_level: float) -> trimesh.Trimesh:
-    out = mesh.copy()
-    if noise_level > 0:
-        out.vertices += rng.uniform(-noise_level, noise_level, out.vertices.shape)
-    return out
-
-
 def inject_local_defects(mesh: trimesh.Trimesh, cfg: DefectConfig, rng: np.random.Generator) -> trimesh.Trimesh:
-    mesh = mesh.copy()
-
     diag = bbox_diag(mesh)
     bump_radius = diag * cfg.bump_radius_ratio
     hole_radius = float(rng.uniform(cfg.hole_radius_range[0] * bump_radius,
@@ -93,12 +84,17 @@ def inject_local_defects(mesh: trimesh.Trimesh, cfg: DefectConfig, rng: np.rando
 
     n_centers = cfg.n_holes + cfg.n_gaussian_bumps
     if n_centers <= 0:
-        return add_random_noise_trimesh(mesh, rng=rng, noise_level=cfg.noise_level)
+        if cfg.noise_level > 0:
+            mesh = trimesh.Trimesh(
+                vertices=mesh.vertices.copy(), faces=mesh.faces, process=False,
+            )
+            mesh.vertices += rng.uniform(-cfg.noise_level, cfg.noise_level, mesh.vertices.shape)
+        return mesh
 
     try:
         mesh.fill_holes()
     except Exception:
-        pass
+        print("Error filling holes")
 
     centers = find_random_centers_trimesh(
         mesh,
@@ -124,5 +120,9 @@ def inject_local_defects(mesh: trimesh.Trimesh, cfg: DefectConfig, rng: np.rando
                 amplitude=cfg.amplitude,
             )
 
-    mesh = add_random_noise_trimesh(mesh, rng=rng, noise_level=cfg.noise_level)
+    if cfg.noise_level > 0:
+        verts = mesh.vertices.copy()
+        verts += rng.uniform(-cfg.noise_level, cfg.noise_level, verts.shape)
+        mesh = trimesh.Trimesh(vertices=verts, faces=mesh.faces, process=False)
+
     return mesh

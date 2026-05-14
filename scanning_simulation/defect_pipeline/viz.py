@@ -56,4 +56,5 @@ def visualize_debug(
             ls.colors = o3d.utility.Vector3dVector(np.tile(np.array([[1.0, 0.0, 0.0]]), (len(lines), 1)))
             geoms.append(ls)
 
-    o3d.visualization.draw_geometries(geoms)
+    # o3d.visualization.draw_geometries(geoms)
+    return geoms
