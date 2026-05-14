@@ -45,24 +45,24 @@ def _spherical_camera_positions(
 
 def angles_for_missing_surface(missing: MissingSurface, n_az: int, n_el: int) -> tuple[np.ndarray, np.ndarray]:
     if missing == "+x":
-        az = np.linspace(90, 270, n_az, endpoint=False)
-        el = np.linspace(-20, 80, n_el, endpoint=False)
+        az = np.linspace(90, 270, n_az, endpoint=False) + 90 / n_az
+        el = np.linspace(-20, 80, n_el, endpoint=False) + 50 / n_el
     elif missing == "-x":
-        az = np.linspace(-90, 90, n_az, endpoint=False)
-        el = np.linspace(-90, 90, n_el, endpoint=False)
+        az = np.linspace(-90, 90, n_az, endpoint=False) + 90 / n_az
+        el = np.linspace(-90, 90, n_el, endpoint=False) + 90 / n_el
     elif missing == "+y":
-        az = np.linspace(-180, 0, n_az, endpoint=False)
-        el = np.linspace(-90, 90, n_el, endpoint=False)
+        az = np.linspace(-180, 0, n_az, endpoint=False) + 90 / n_az
+        el = np.linspace(-90, 90, n_el, endpoint=False) + 90 / n_el
     elif missing == "-y":
-        az = np.linspace(0, 180, n_az, endpoint=False)
-        el = np.linspace(-90, 90, n_el, endpoint=False)
+        az = np.linspace(0, 180, n_az, endpoint=False) + 90 / n_az
+        el = np.linspace(-90, 90, n_el, endpoint=False) + 90 / n_el
     elif missing == "+z":
         n_az, n_el = n_el, n_az
-        az = np.linspace(-180, 180, n_az, endpoint=False)
+        az = np.linspace(-180, 180, n_az, endpoint=False) + 180 / n_az
         el = np.linspace(-90, 0, n_el, endpoint=False) + 90 / (2 * n_el)
     elif missing == "-z":
         n_az, n_el = n_el, n_az
-        az = np.linspace(-180, 180, n_az, endpoint=False)
+        az = np.linspace(-180, 180, n_az, endpoint=False) + 180 / n_az
         el = np.linspace(0, 90, n_el, endpoint=False)
     else:
         raise ValueError(f"Unknown missing surface: {missing}")
