@@ -101,10 +101,12 @@ Links
 
 Citation
 ```bibtex
-@article{kabisov2026cadreasoner,
-  title={CADReasoner: Iterative Program Editing for CAD Reverse Engineering},
-  author={Kabisov, Soslan and Kirichuk, Vsevolod and Volkov, Andrey and Savrasov, Gennadii and Barannikov, Marina and Konushin, Anton and Kuznetsov, Andrey and Zhemchuzhnikov, Dmitrii},
-  journal={arXiv preprint arXiv:2603.29847},
-  year={2026}
+@InProceedings{Kabisov_2026_CVPR,
+    author    = {Kabisov, Soslan and Kirichuk, Vsevolod and Volkov, Andrey and Barannikov, Marina and Savrasov, Gennadiy and Konushin, Anton and Kuznetsov, Andrey and Zhemchuzhnikov, Dmitrii},
+    title     = {CADReasoner: Iterative Program Editing for CAD Reverse Engineering},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Findings},
+    month     = {June},
+    year      = {2026},
+    pages     = {6143-6153}
 }
 ```
