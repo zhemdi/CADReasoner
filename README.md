@@ -7,7 +7,14 @@ The method predicts a runnable **CadQuery** program and refines it over multiple
 
 **Paper:** https://arxiv.org/abs/2603.29847  
 **Hugging Face paper page:** https://huggingface.co/papers/2603.29847  
-**Model:** https://huggingface.co/kulibinai/cadreasoner  
+
+**Models:**
+
+| Model | Input modality | Code |
+|---|---|---|
+| [`kulibinai/cadreasoner`](https://huggingface.co/kulibinai/cadreasoner) | multi-view renders | repository root |
+| [`kulibinai/cadreasoner-pc`](https://huggingface.co/kulibinai/cadreasoner-pc) | point cloud | [`pc_cm/`](pc_cm/) |
+| [`kulibinai/cadreasoner-cm`](https://huggingface.co/kulibinai/cadreasoner-cm) | point cloud + multi-view renders | [`pc_cm/`](pc_cm/) |
 
 ---
 
@@ -29,6 +36,7 @@ The model combines **multi-view renders** and **point-cloud information** to imp
 ```text
 CADReasoner/
 ├── data/                  # dataset split utilities and preprocessing instructions
+├── pc_cm/                 # point-cloud and cross-modality models (cadreasoner-pc / -cm)
 ├── scanning_simulation/   # scan-simulation pipeline and related scripts
 ├── dataset.py             # dataset loading
 ├── evaluate.py            # metric computation
@@ -38,6 +46,11 @@ CADReasoner/
 ├── utils.py               # utility functions
 └── visualization.py       # rendering / visualization utilities
 ```
+
+The scripts in the repository root drive the image-only model
+([`kulibinai/cadreasoner`](https://huggingface.co/kulibinai/cadreasoner)). The point-cloud and
+cross-modality models use a different architecture and live in [`pc_cm/`](pc_cm/) — see
+[`pc_cm/README.md`](pc_cm/README.md).
 Quick start
 
 0) Installation
@@ -79,7 +92,17 @@ To compute evaluation metrics, run:
 ```bash
 python3 evaluate.py --dataset <test_dataset> --pred_dir <pred_dir>
 ```
-5) Scan simulation
+5) Point-cloud and cross-modality models
+
+To train, run or evaluate `cadreasoner-pc` and `cadreasoner-cm`, use the scripts in
+[`pc_cm/`](pc_cm/):
+```bash
+python3 pc_cm/test.py --dataset <test_dataset> --checkpoint kulibinai/cadreasoner-pc \
+    --use_pc true --use_img false --n_points 128 --n_iters <n_iters> --outdir <outdir>
+```
+See [`pc_cm/README.md`](pc_cm/README.md) for the cross-modality variant and for training.
+
+6) Scan simulation
 
 The repository also includes a scan-simulation pipeline used for robustness experiments and evaluation under simulated scanning artifacts.
 
@@ -97,7 +120,9 @@ What you get
 Links
 * Paper: [arXiv:2603.29847](https://arxiv.org/abs/2603.29847)
 * Hugging Face paper page: [CADReasoner on Hugging Face Papers](https://huggingface.co/papers/2603.29847)
-* Model: [kulibinai/cadreasoner](https://huggingface.co/kulibinai/cadreasoner)￼
+* Models: [kulibinai/cadreasoner](https://huggingface.co/kulibinai/cadreasoner) ·
+  [kulibinai/cadreasoner-pc](https://huggingface.co/kulibinai/cadreasoner-pc) ·
+  [kulibinai/cadreasoner-cm](https://huggingface.co/kulibinai/cadreasoner-cm)
 
 Citation
 ```bibtex
